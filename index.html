@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Balloon Pop</title>
+<style>
+  :root {
+    --sky: #dff1ff;
+    --ink: #1b2a3a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #9ab;
+    font-family: "Arial Rounded MT Bold", "Trebuchet MS", Arial, sans-serif;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Portrait play area: fills a phone, stays tall and narrow on a laptop */
+  #game {
+    position: relative;
+    height: 100%;
+    width: 100%;
+    max-width: calc(100vh * 9 / 16);
+    margin: 0 auto;
+    background: var(--sky);
+    overflow: hidden;
+  }
+  #bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 18px;
+    font-size: 26px;
+    color: var(--ink);
+    z-index: 5;
+  }
+  #sound {
+    font-size: 26px;
+    background: #fff;
+    border: none;
+    border-radius: 14px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .balloon {
+    position: absolute;
+    width: 110px;
+    height: 132px;
+    border-radius: 50% 50% 48% 48%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 58px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 2px 0 rgba(0,0,0,0.25);
+    cursor: pointer;
+  }
+  /* the string */
+  .balloon::after {
+    content: "";
+    position: absolute;
+    bottom: -40px;
+    left: 50%;
+    width: 2px;
+    height: 40px;
+    background: #667;
+  }
+  .pop {
+    position: absolute;
+    font-size: 120px;
+    font-weight: bold;
+    color: var(--ink);
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    animation: grow 0.9s ease-out forwards;
+    z-index: 4;
+  }
+  @keyframes grow {
+    0%   { opacity: 1; transform: translate(-50%, -50%) scale(0.6); }
+    40%  { opacity: 1; transform: translate(-50%, -50%) scale(1.15); }
+    100% { opacity: 0; transform: translate(-50%, -60%) scale(1.15); }
+  }
+  #start {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    background: var(--sky);
+    z-index: 10;
+  }
+  #start h1 { font-size: 44px; color: var(--ink); }
+  #start button {
+    font-size: 40px;
+    padding: 20px 56px;
+    border: none;
+    border-radius: 999px;
+    background: #ff5a5f;
+    color: #fff;
+    cursor: pointer;
+  }
+  #rotate {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: var(--sky);
+    color: var(--ink);
+    font-size: 30px;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 30px;
+    z-index: 20;
+  }
+  /* Phones turned sideways get a gentle nudge back to portrait */
+  @media (orientation: landscape) and (max-height: 500px) {
+    #rotate { display: flex; }
+  }
+</style>
+</head>
+<body>
+<div id="game">
+  <div id="bar">
+    <span id="score">0</span>
+    <button id="sound" aria-label="Sound on or off">🔊</button>
+  </div>
+  <div id="start">
+    <h1>Balloon Pop</h1>
+    <button id="play">Play</button>
+  </div>
+</div>
+<div id="rotate">Please turn the phone upright 📱</div>
+
+<script>
+  // Settings you can change
+  const MIN_NUMBER = 1;
+  const MAX_NUMBER = 10;
+  const MAX_BALLOONS = 12;     // how many on screen at once
+  const SPEED = 110;           // pixels per second
+  const COLORS = ["#ff5a5f", "#2f9bff", "#2fbf71", "#ffb400", "#a55eea", "#ff7f3f"];
+
+  const game = document.getElementById("game");
+  const scoreEl = document.getElementById("score");
+  const soundBtn = document.getElementById("sound");
+  let balloons = [];
+  let score = 0;
+  let soundOn = true;
+  let running = false;
+  let last = 0;
+
+  function rand(a, b) { return Math.random() * (b - a) + a; }
+
+  function speak(text) {
+    if (!soundOn || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(String(text));
+    u.rate = 0.8;
+    u.pitch = 1.2;
+    window.speechSynthesis.speak(u);
+  }
+
+  function addBalloon() {
+    const w = game.clientWidth;
+    const h = game.clientHeight;
+    const el = document.createElement("div");
+    el.className = "balloon";
+    const n = Math.floor(rand(MIN_NUMBER, MAX_NUMBER + 1));
+    el.textContent = n;
+    el.style.background = COLORS[Math.floor(rand(0, COLORS.length))];
+    // keep balloons apart: each column is its own lane, a new balloon
+    // goes into the lane with the most room, below the last balloon there
+    const cols = Math.max(1, Math.floor((w - 20) / 120));
+    const colWidth = (w - 20) / cols;
+    const lowestIn = (c) => balloons.filter(o => o.col === c)
+                                    .reduce((m, o) => Math.max(m, o.y), -Infinity);
+    let col = 0;
+    for (let c = 1; c < cols; c++) {
+      if (lowestIn(c) < lowestIn(col) || (lowestIn(c) === lowestIn(col) && Math.random() < 0.5)) col = c;
+    }
+    const b = {
+      el, n, col,
+      x: 10 + col * colWidth + (colWidth - 110) / 2,
+      y: Math.max(h + rand(20, 120), lowestIn(col) + rand(150, 230)),
+      drift: rand(0, Math.PI * 2)
+    };
+    el.style.left = b.x + "px";
+    el.style.top = b.y + "px";
+    el.addEventListener("pointerdown", (e) => { e.preventDefault(); popBalloon(b); });
+    game.appendChild(el);
+    balloons.push(b);
+  }
+
+  function popBalloon(b) {
+    if (!balloons.includes(b)) return;
+    balloons = balloons.filter(x => x !== b);
+    const big = document.createElement("div");
+    big.className = "pop";
+    big.textContent = b.n;
+    big.style.left = (b.x + 55) + "px";
+    big.style.top = (b.y + 66) + "px";
+    game.appendChild(big);
+    setTimeout(() => big.remove(), 900);
+    b.el.remove();
+    speak(b.n);
+    score++;
+    scoreEl.textContent = score;
+  }
+
+  function loop(t) {
+    if (!running) return;
+    const dt = Math.min((t - last) / 1000, 0.05);
+    last = t;
+    for (const b of balloons.slice()) {
+      b.y -= SPEED * dt;
+      b.drift += dt;
+      b.el.style.top = b.y + "px";
+      b.el.style.left = (b.x + Math.sin(b.drift) * 12) + "px";
+      if (b.y < -180) {
+        b.el.remove();
+        balloons = balloons.filter(x => x !== b);
+      }
+    }
+    while (balloons.length < MAX_BALLOONS) addBalloon();
+    requestAnimationFrame(loop);
+  }
+
+  document.getElementById("play").addEventListener("click", () => {
+    document.getElementById("start").remove();
+    speak("Pop the balloons");
+    running = true;
+    last = performance.now();
+    requestAnimationFrame(loop);
+  });
+
+  soundBtn.addEventListener("click", () => {
+    soundOn = !soundOn;
+    soundBtn.textContent = soundOn ? "🔊" : "🔇";
+  });
+
+  // Try to lock portrait where the browser allows it
+  if (screen.orientation && screen.orientation.lock) {
+    screen.orientation.lock("portrait").catch(() => {});
+  }
+</script>
+</body>
+</html>
